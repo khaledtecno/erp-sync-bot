@@ -2,18 +2,18 @@ name: ERPNext Sync Bot
 
 on:
   schedule:
-    - cron: '0 * * * *' # السكريبت هيشتغل كل ساعة بالضبط
-  workflow_dispatch: # ده بيسمحلك تشغله يدوي في أي وقت للتجربة
+    - cron: '0 * * * *'
+  workflow_dispatch:
 
 jobs:
   run-sync:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4 # تم التحديث هنا لـ v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5 # تم التحديث هنا لـ v5
         with:
           python-version: '3.10'
 
@@ -21,4 +21,4 @@ jobs:
         run: pip install requests
 
       - name: Run Sync Script
-        run: python sync_bot.py.text
+        run: python sync_bot.py
