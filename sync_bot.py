@@ -11,104 +11,95 @@ woo_params = {
 }
 
 # ==========================================
-# 2. إعدادات ERPNext
+# 2. إعدادات ERPNext (محدثة بالبيانات الصحيحة)
 # ==========================================
 erp_base_url = "https://missakakos.z.frappe.cloud/api/resource" 
-
-erp_api_key = "cf5d4f31c4ef20d"
-erp_api_secret = "b3309adb7a0a908"
-
 erp_headers = {
-    "Authorization": f"token {erp_api_key}:{erp_api_secret}",
+    "Authorization": "token cf5d4f31c4ef20d:b3309adb7a0a908",
     "Content-Type": "application/json",
     "Accept": "application/json"
 }
 
-# ⚠️ إعدادات أوامر البيع (تم إضافة المخزن)
+# الإعدادات اللي طلعناها من الصور
 ERP_COMPANY = "MissAkakos" 
 ERP_DEFAULT_CUSTOMER = "WooCommerce Customer"
-ERP_DEFAULT_WAREHOUSE = "Stores - MA" # 👈 اسم المخزن من الصورة
+ERP_DEFAULT_WAREHOUSE = "Stores - MA"
 
 # ==========================================
-# 3. دالة سحب المنتجات
+# 3. دالة مزامنة المنتجات (لضمان وجود الأصناف)
 # ==========================================
 def sync_products():
-    print("--- 📦 جاري سحب المنتجات من WooCommerce ---")
+    print("--- 📦 جاري مزامنة المنتجات من WooCommerce ---")
     response = requests.get(f"{woo_base}/products", params=woo_params)
-
     if response.status_code == 200:
         products = response.json()
-        print(f"تم العثور على {len(products)} منتج. جاري الإرسال لـ ERPNext...")
-        
         for product in products:
+            item_code = product['sku'] if product['sku'] else str(product['id'])
             item_data = {
-                "item_code": product['sku'] if product['sku'] else str(product['id']),
+                "item_code": item_code,
                 "item_name": product['name'],
                 "item_group": "Products",
                 "stock_uom": "Nos",
-                "description": product['description'],
-                "is_stock_item": 1 if product['manage_stock'] else 0
+                "is_stock_item": 1 
             }
-            
-            erp_response = requests.post(f"{erp_base_url}/Item", headers=erp_headers, json=item_data)
-            
-            if erp_response.status_code == 200:
-                print(f"✅ تم إضافة: {product['name']}")
-            elif erp_response.status_code == 409:
-                 print(f"⚠️ المنتج موجود مسبقاً: {product['name']}")
-            else:
-                print(f"❌ خطأ في إضافة {product['name']}: {erp_response.text}")
-    else:
-        print(f"حدث خطأ أثناء الاتصال بووكومرس (منتجات): {response.status_code}")
+            # محاولة إنشاء المنتج لو مش موجود
+            requests.post(f"{erp_base_url}/Item", headers=erp_headers, json=item_data)
+        print(f"✅ تمت مراجعة {len(products)} منتج.")
 
 # ==========================================
-# 4. دالة سحب الطلبات
+# 4. دالة مزامنة الطلبات (مع حل مشكلة المخزن)
 # ==========================================
 def sync_orders():
-    print("\n--- 🛒 جاري سحب الطلبات من WooCommerce ---")
+    print("\n--- 🛒 جاري مزامنة الطلبات من WooCommerce ---")
     params = woo_params.copy()
-    params['status'] = 'processing' 
+    params['status'] = 'processing' # بيسحب الطلبات قيد التنفيذ فقط
     
     response = requests.get(f"{woo_base}/orders", params=params)
     
     if response.status_code == 200:
         orders = response.json()
-        print(f"تم العثور على {len(orders)} طلب (Processing).\n")
+        print(f"تم العثور على {len(orders)} طلب جديد.\n")
         
         for order in orders:
             items_list = []
             for item in order['line_items']:
+                # تحديد الكود (SKU أو ID)
+                i_code = item['sku'] if item['sku'] else str(item['product_id'])
                 items_list.append({
-                    "item_code": item['sku'] if item['sku'] else str(item['product_id']),
+                    "item_code": i_code,
                     "qty": item['quantity'],
                     "rate": item['price'],
-                    "delivery_warehouse": ERP_DEFAULT_WAREHOUSE # 👈 ربط المخزن بالمنتج
+                    "warehouse": ERP_DEFAULT_WAREHOUSE # تحديد المخزن لكل صنف
                 })
             
+            # تجهيز بيانات أمر البيع
             sales_order_data = {
                 "doctype": "Sales Order",
                 "customer": ERP_DEFAULT_CUSTOMER,
                 "company": ERP_COMPANY,
+                "set_warehouse": ERP_DEFAULT_WAREHOUSE, # تحديد المخزن للأوردر بالكامل
                 "po_no": str(order['id']),
                 "transaction_date": order['date_created'].split("T")[0],
                 "delivery_date": order['date_created'].split("T")[0], 
                 "items": items_list
             }
             
+            # إرسال الطلب لـ ERPNext
             res = requests.post(f"{erp_base_url}/Sales Order", headers=erp_headers, json=sales_order_data)
             
             if res.status_code == 200:
-                print(f"✅ تم إنشاء أمر بيع للطلب رقم: {order['id']}")
+                print(f"✅ تم بنجاح: إنشاء أمر بيع للطلب رقم {order['id']}")
             elif res.status_code == 409:
-                print(f"⚠️ الطلب رقم {order['id']} موجود مسبقاً.")
+                print(f"⚠️ الطلب رقم {order['id']} موجود مسبقاً في النظام.")
             else:
-                print(f"❌ تم رفض الطلب {order['id']} من ERPNext! تفاصيل الخطأ:")
-                print(res.text) 
+                # طباعة الخطأ بشكل مختصر وواضح
+                error_msg = res.json().get('_server_messages', res.text)
+                print(f"❌ تم رفض الطلب {order['id']}: {error_msg[:200]}")
     else:
-        print(f"حدث خطأ أثناء الاتصال بووكومرس (طلبات): {response.status_code}")
+        print(f"❌ خطأ في الاتصال بووكومرس: {response.status_code}")
 
 # ==========================================
-# 5. تشغيل السكريبت
+# 5. تشغيل البوت
 # ==========================================
 if __name__ == "__main__":
     sync_products()
