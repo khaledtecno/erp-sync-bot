@@ -24,12 +24,12 @@ erp_headers = {
     "Accept": "application/json"
 }
 
-# ⚠️ إعدادات هامة جداً لأوامر البيع (Sales Orders)
-ERP_COMPANY = "Miss Akakos" # 📌 تأكد أن هذا هو اسم الشركة بالضبط كما في إعدادات ERPNext
-ERP_DEFAULT_CUSTOMER = "WooCommerce Customer" # 📌 يجب إنشاء عميل بهذا الاسم في ERPNext أولاً
+# ⚠️ إعدادات أوامر البيع (محدثة وجاهزة)
+ERP_COMPANY = "MissAkakos" 
+ERP_DEFAULT_CUSTOMER = "WooCommerce Customer"
 
 # ==========================================
-# 3. دالة سحب المنتجات (الكود الخاص بك)
+# 3. دالة سحب المنتجات
 # ==========================================
 def sync_products():
     print("--- 📦 جاري سحب المنتجات من WooCommerce ---")
@@ -61,11 +61,10 @@ def sync_products():
         print(f"حدث خطأ أثناء الاتصال بووكومرس (منتجات): {response.status_code}")
 
 # ==========================================
-# 4. دالة سحب الطلبات (الجديدة)
+# 4. دالة سحب الطلبات
 # ==========================================
 def sync_orders():
     print("\n--- 🛒 جاري سحب الطلبات من WooCommerce ---")
-    # سحب الطلبات اللي حالتها Processing فقط
     params = woo_params.copy()
     params['status'] = 'processing' 
     
@@ -76,7 +75,6 @@ def sync_orders():
         print(f"تم العثور على {len(orders)} طلب (Processing).\n")
         
         for order in orders:
-            # تجهيز المنتجات اللي جوه الطلب
             items_list = []
             for item in order['line_items']:
                 items_list.append({
@@ -85,28 +83,25 @@ def sync_orders():
                     "rate": item['price']
                 })
             
-            # تجهيز أمر البيع (Sales Order)
             sales_order_data = {
                 "doctype": "Sales Order",
                 "customer": ERP_DEFAULT_CUSTOMER,
                 "company": ERP_COMPANY,
-                "po_no": str(order['id']), # حفظ رقم طلب ووكومرس
+                "po_no": str(order['id']),
                 "transaction_date": order['date_created'].split("T")[0],
                 "delivery_date": order['date_created'].split("T")[0], 
                 "items": items_list
             }
             
-            # إرسال الطلب
             res = requests.post(f"{erp_base_url}/Sales Order", headers=erp_headers, json=sales_order_data)
             
-            # 🔍 الطباعة التفصيلية لاكتشاف الأخطاء (Debug)
             if res.status_code == 200:
                 print(f"✅ تم إنشاء أمر بيع للطلب رقم: {order['id']}")
             elif res.status_code == 409:
                 print(f"⚠️ الطلب رقم {order['id']} موجود مسبقاً.")
             else:
                 print(f"❌ تم رفض الطلب {order['id']} من ERPNext! تفاصيل الخطأ:")
-                print(res.text) # السطر ده هيقولنا المشكلة فين بالظبط
+                print(res.text) 
     else:
         print(f"حدث خطأ أثناء الاتصال بووكومرس (طلبات): {response.status_code}")
 
@@ -116,4 +111,5 @@ def sync_orders():
 if __name__ == "__main__":
     sync_products()
     sync_orders()
-    print("\n🎉 انتهت دورة المزامنة.")
+    print("\n🎉 انتهت دورة المزامنة بنجاح.")
+    
