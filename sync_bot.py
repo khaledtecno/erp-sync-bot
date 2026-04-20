@@ -24,9 +24,10 @@ erp_headers = {
     "Accept": "application/json"
 }
 
-# ⚠️ إعدادات أوامر البيع (محدثة وجاهزة)
+# ⚠️ إعدادات أوامر البيع (تم إضافة المخزن)
 ERP_COMPANY = "MissAkakos" 
 ERP_DEFAULT_CUSTOMER = "WooCommerce Customer"
+ERP_DEFAULT_WAREHOUSE = "Stores - MA" # 👈 اسم المخزن من الصورة
 
 # ==========================================
 # 3. دالة سحب المنتجات
@@ -80,7 +81,8 @@ def sync_orders():
                 items_list.append({
                     "item_code": item['sku'] if item['sku'] else str(item['product_id']),
                     "qty": item['quantity'],
-                    "rate": item['price']
+                    "rate": item['price'],
+                    "delivery_warehouse": ERP_DEFAULT_WAREHOUSE # 👈 ربط المخزن بالمنتج
                 })
             
             sales_order_data = {
