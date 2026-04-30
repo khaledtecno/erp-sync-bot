@@ -11,7 +11,7 @@ woo_params = {
 }
 
 # ==========================================
-# 2. إعدادات ERPNext (محدثة بالبيانات الصحيحة)
+# 2. إعدادات ERPNext 
 # ==========================================
 erp_base_url = "https://missakakos.z.frappe.cloud/api/resource" 
 erp_headers = {
@@ -20,16 +20,47 @@ erp_headers = {
     "Accept": "application/json"
 }
 
-# الإعدادات اللي طلعناها من الصور
 ERP_COMPANY = "MissAkakos" 
-ERP_DEFAULT_CUSTOMER = "WooCommerce Customer"
 ERP_DEFAULT_WAREHOUSE = "Stores - MA"
 
 # ==========================================
-# 3. دالة مزامنة المنتجات (لضمان وجود الأصناف)
+# 3. دالة جلب أو إنشاء العميل (Customer)
+# ==========================================
+def get_or_create_customer(order_billing):
+    email = order_billing.get('email')
+    full_name = f"{order_billing.get('first_name')} {order_billing.get('last_name')}".strip()
+    phone = order_billing.get('phone')
+
+    # البحث عن العميل بالإيميل
+    search_url = f"{erp_base_url}/Customer?filters=[[\"email_id\", \"=\", \"{email}\"]]"
+    res = requests.get(search_url, headers=erp_headers)
+    
+    if res.status_code == 200 and res.json().get('data'):
+        customer_id = res.json()['data'][0]['name']
+        print(f"✅ تم العثور على العميل: {customer_id}")
+        return customer_id
+    else:
+        # إنشاء عميل جديد إذا لم يوجد
+        customer_data = {
+            "customer_name": full_name,
+            "customer_type": "Individual",
+            "customer_group": "All Customer Groups",
+            "territory": "All Territories",
+            "email_id": email,
+            "mobile_no": phone
+        }
+        create_res = requests.post(f"{erp_base_url}/Customer", headers=erp_headers, json=customer_data)
+        if create_res.status_code == 200:
+            new_id = create_res.json()['data']['name']
+            print(f"✨ تم إنشاء سجل عميل جديد: {new_id}")
+            return new_id
+    return "Guest" # كحالة احتياطية
+
+# ==========================================
+# 4. دالة مزامنة وتحديث المنتجات
 # ==========================================
 def sync_products():
-    print("--- 📦 جاري مزامنة المنتجات من WooCommerce ---")
+    print("--- 📦 جاري مزامنة وتحديث المنتجات ---")
     response = requests.get(f"{woo_base}/products", params=woo_params)
     if response.status_code == 200:
         products = response.json()
@@ -40,69 +71,67 @@ def sync_products():
                 "item_name": product['name'],
                 "item_group": "Products",
                 "stock_uom": "Nos",
-                "is_stock_item": 1 
+                "is_stock_item": 1,
+                "standard_rate": float(product.get('price', 0)) # تحديث السعر
             }
-            # محاولة إنشاء المنتج لو مش موجود
-            requests.post(f"{erp_base_url}/Item", headers=erp_headers, json=item_data)
-        print(f"✅ تمت مراجعة {len(products)} منتج.")
+            
+            # محاولة التحديث أولاً
+            update_res = requests.put(f"{erp_base_url}/Item/{item_code}", headers=erp_headers, json=item_data)
+            
+            if update_res.status_code == 200:
+                print(f"🔄 تم تحديث بيانات وسعر المنتج: {item_code}")
+            elif update_res.status_code == 404:
+                # إذا لم يوجد، نقوم بإنشائه
+                requests.post(f"{erp_base_url}/Item", headers=erp_headers, json=item_data)
+                print(f"✨ تم إضافة منتج جديد: {item_code}")
 
 # ==========================================
-# 4. دالة مزامنة الطلبات (مع حل مشكلة المخزن)
+# 5. دالة مزامنة الطلبات ببيانات عملاء حقيقية
 # ==========================================
 def sync_orders():
-    print("\n--- 🛒 جاري مزامنة الطلبات من WooCommerce ---")
+    print("\n--- 🛒 جاري مزامنة الطلبات التفصيلية ---")
     params = woo_params.copy()
-    params['status'] = 'processing' # بيسحب الطلبات قيد التنفيذ فقط
+    params['status'] = 'processing'
     
     response = requests.get(f"{woo_base}/orders", params=params)
     
     if response.status_code == 200:
         orders = response.json()
-        print(f"تم العثور على {len(orders)} طلب جديد.\n")
-        
         for order in orders:
+            # الحصول على معرف العميل الحقيقي
+            erp_customer = get_or_create_customer(order['billing'])
+            
             items_list = []
             for item in order['line_items']:
-                # تحديد الكود (SKU أو ID)
                 i_code = item['sku'] if item['sku'] else str(item['product_id'])
                 items_list.append({
                     "item_code": i_code,
                     "qty": item['quantity'],
                     "rate": item['price'],
-                    "warehouse": ERP_DEFAULT_WAREHOUSE # تحديد المخزن لكل صنف
+                    "warehouse": ERP_DEFAULT_WAREHOUSE
                 })
             
-            # تجهيز بيانات أمر البيع
             sales_order_data = {
                 "doctype": "Sales Order",
-                "customer": ERP_DEFAULT_CUSTOMER,
+                "customer": erp_customer,
                 "company": ERP_COMPANY,
-                "set_warehouse": ERP_DEFAULT_WAREHOUSE, # تحديد المخزن للأوردر بالكامل
+                "set_warehouse": ERP_DEFAULT_WAREHOUSE,
                 "po_no": str(order['id']),
                 "transaction_date": order['date_created'].split("T")[0],
                 "delivery_date": order['date_created'].split("T")[0], 
-                "items": items_list
+                "items": items_list,
+                "billing_address": f"{order['billing']['address_1']}, {order['billing']['city']}"
             }
             
-            # إرسال الطلب لـ ERPNext
             res = requests.post(f"{erp_base_url}/Sales Order", headers=erp_headers, json=sales_order_data)
             
             if res.status_code == 200:
-                print(f"✅ تم بنجاح: إنشاء أمر بيع للطلب رقم {order['id']}")
+                print(f"✅ نجاح: أمر بيع للعميل {order['billing']['first_name']} - طلب رقم {order['id']}")
             elif res.status_code == 409:
-                print(f"⚠️ الطلب رقم {order['id']} موجود مسبقاً في النظام.")
-            else:
-                # طباعة الخطأ بشكل مختصر وواضح
-                error_msg = res.json().get('_server_messages', res.text)
-                print(f"❌ تم رفض الطلب {order['id']}: {error_msg[:200]}")
-    else:
-        print(f"❌ خطأ في الاتصال بووكومرس: {response.status_code}")
+                print(f"⚠️ الطلب {order['id']} موجود مسبقاً.")
 
-# ==========================================
-# 5. تشغيل البوت
-# ==========================================
 if __name__ == "__main__":
     sync_products()
     sync_orders()
-    print("\n🎉 انتهت دورة المزامنة بنجاح.")
+    print("\n🎉 تمت عملية المزامنة الشاملة بنجاح.")
     
